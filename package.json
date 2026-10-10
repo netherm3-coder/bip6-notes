@@ -4,8 +4,8 @@
   "description": "Блокнот для Amazfit Bip 6 (Zepp OS) з українською та англійською клавіатурою",
   "private": true,
   "scripts": {
-    "login": "node tools/zepp-login.js",
-    "bridge": "zeus bridge",
+    "qr": "node .tools/qr.js",
+    "login": "node .tools/zepp-login.js",
     "build": "zeus build"
   }
 }
