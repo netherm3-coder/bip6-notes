@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # Щоденна перезбірка: preview-пакет має позначку часу, тож тримаємо його свіжим.
+  schedule:
+    - cron: '17 3 * * *'
 
 permissions:
   contents: write
@@ -25,8 +28,13 @@ jobs:
       - name: Install Zeus CLI
         run: npm install -g @zeppos/zeus-cli@1
 
+      # Звичайна збірка перевіряє проєкт і завантажує список пристроїв Zepp.
       - name: Build
         run: zeus build
+
+      # Сканер «Режиму розробника» в Zepp приймає лише preview-пакети.
+      - name: Build preview package
+        run: node .tools/build-preview.js
 
       - name: Extract the Bip 6 package
         run: |
@@ -43,7 +51,9 @@ jobs:
           unzip -l out/bip6-notes.zpk
           unzip -p out/bip6-notes.zpk device.zip > device.zip
           unzip -l device.zip
-          unzip -p device.zip app.json; echo
+          unzip -p device.zip app.json > app.json
+          cat app.json; echo
+          grep -q '"mode":"preview"' app.json
 
       - name: Publish to the build branch
         env:
