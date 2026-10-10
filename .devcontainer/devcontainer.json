@@ -1,0 +1,22 @@
+{
+  "name": "Блокнот для Bip 6 (Zepp OS)",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
+  "postCreateCommand": "npm install -g @zeppos/zeus-cli@1",
+  "portsAttributes": {
+    "8899": {
+      "label": "Zepp login",
+      "onAutoForward": "silent"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.fontSize": 15,
+        "workbench.startupEditor": "readme"
+      }
+    },
+    "codespaces": {
+      "openFiles": ["README.md"]
+    }
+  }
+}
