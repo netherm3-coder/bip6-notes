@@ -1,6 +1,9 @@
 // Екранна клавіатура УКР/ENG/символи для Bip 6.
 // Символ вводиться при відпусканні пальця: поки палець на екрані, над ним
 // показується збільшена літера, і можна довести палець до сусідньої клавіші.
+// Пробіл: затиснути (або повести вбік) — уся клавіатура стає тачпадом для курсора:
+// вліво-вправо — по символах, вгору-вниз — по рядках; відпустив — пробіл не ставиться.
+// Дотики вище клавіатури (по тексту) передаються в opts.onArea.
 
 import * as hmUI from '@zos/ui'
 import { LAYOUTS, LANG_NAMES, MAX_KEYS_PER_ROW, altFor, hasCase } from './layouts'
@@ -9,6 +12,12 @@ import { COLOR } from '../utils/constants'
 const LONG_PRESS_MS = 450
 const DUP_WINDOW_MS = 120
 const WATCHDOG_MS = 3000
+// курсор пробілом
+const CURSOR_HOLD_MS = LONG_PRESS_MS // утримати пробіл стільки — і можна вести курсор
+const SLIDE_PX = 18 // або одразу повести вбік на стільки (менше — це тремтіння пальця при звичайному пробілі)
+const STEP_X = 14 // пікселів на один символ
+const STEP_Y = 36 // пікселів на один рядок
+const CURSOR_WATCHDOG_MS = 10000
 const ICON = 32
 const SIDE = 3
 const CTRL_SIDE = 16
@@ -50,7 +59,14 @@ export function mountKeyboard(opts) {
     pressed: false,
     key: null,
     alt: false,
-    action: '',
+    action: '', // '' | 'back' | 'cursor'
+    area: false, // дотик почався на тексті, а не на клавіатурі
+    sx: 0,
+    sy: 0,
+    px: 0,
+    py: 0,
+    cx: 0,
+    cy: 0,
     last: 0,
     longTimer: null,
     watchdog: null
@@ -426,12 +442,56 @@ export function mountKeyboard(opts) {
 
   function armWatchdog() {
     cancel(st.watchdog)
-    st.watchdog = later(() => {
-      if (st.pressed) {
-        endPress()
-        st.key = null
-      }
-    }, WATCHDOG_MS)
+    st.watchdog = later(
+      () => {
+        if (st.pressed) {
+          if (st.action === 'cursor') exitCursor()
+          endPress()
+          st.key = null
+          st.area = false
+        }
+      },
+      st.action === 'cursor' ? CURSOR_WATCHDOG_MS : WATCHDOG_MS
+    )
+  }
+
+  // ---------- курсор пробілом ----------
+
+  function spaceLook(on) {
+    const c = ctrl.space
+    if (!c || !c.key) return
+    const k = c.key
+    place(c.bg, { x: k.vx, y: k.vy, w: k.vw, h: k.vh, radius: 10, color: on ? COLOR.ACCENT : baseColor(k) })
+    place(c.label, { x: k.vx, y: k.vy, w: k.vw, h: k.vh, text: on ? '<   >' : ctrlText('space'), color: on ? COLOR.TEXT : COLOR.TEXT_DIM })
+  }
+
+  function enterCursor(anchor) {
+    if (st.action === 'cursor') return
+    st.action = 'cursor'
+    st.cx = anchor.x
+    st.cy = anchor.y
+    cancel(st.longTimer)
+    st.longTimer = null
+    hideBubble()
+    spaceLook(true)
+    armWatchdog()
+  }
+
+  function exitCursor() {
+    st.action = ''
+    spaceLook(false)
+  }
+
+  function cursorMove(p) {
+    if (!p || (p.x === 0 && p.y === 0)) return
+    const dx = Math.trunc((p.x - st.cx) / STEP_X)
+    const dy = Math.trunc((p.y - st.cy) / STEP_Y)
+    if (!dx && !dy) return
+    st.cx += dx * STEP_X
+    st.cy += dy * STEP_Y
+    if (opts.onCursor) opts.onCursor({ dx, dy })
+    else if (dx && editor.moveCursor(dx) && opts.onText) opts.onText(editor.text)
+    if (editor.shift !== st.shiftState) refreshLabels()
   }
 
   function onDown(p) {
@@ -440,11 +500,22 @@ export function mountKeyboard(opts) {
       onMove(p)
       return
     }
-    if (st.pressed) endPress()
+    if (st.pressed) {
+      if (st.action === 'cursor') exitCursor()
+      endPress()
+    }
     st.pressed = true
     st.last = now
     st.action = ''
+    st.area = false
     armWatchdog()
+    // Дотик по тексту над клавіатурою — гортання або курсор (вирішує сторінка).
+    if (p && p.y < top - 12 && opts.onArea) {
+      st.area = true
+      setKey(null)
+      opts.onArea('down', p)
+      return
+    }
     setKey(hitTest(p))
     const k = st.key
     if (k && k.kind === 'back') {
@@ -454,14 +525,38 @@ export function mountKeyboard(opts) {
         if (st.pressed && st.key === k && editor.deleteWord()) changed()
       }, LONG_PRESS_MS + 150)
     }
+    if (k && k.kind === 'space' && p) {
+      st.sx = st.px = p.x
+      st.sy = st.py = p.y
+      st.longTimer = later(() => {
+        // від того місця, де палець зараз, — щоб курсор не стрибнув
+        if (st.pressed && st.key === k && st.action === '') enterCursor({ x: st.px, y: st.py })
+      }, CURSOR_HOLD_MS)
+    }
   }
 
   function onMove(p) {
     if (!st.pressed) return
     st.last = Date.now()
     armWatchdog()
+    if (st.area) {
+      if (p && !(p.x === 0 && p.y === 0)) opts.onArea('move', p)
+      return
+    }
+    if (st.action === 'cursor') {
+      cursorMove(p)
+      return
+    }
     if (st.action === 'back') return
     if (!p || (p.x === 0 && p.y === 0)) return
+    st.px = p.x
+    st.py = p.y
+    // повели пальцем по пробілу вбік — одразу курсор, без очікування
+    if (st.key && st.key.kind === 'space' && Math.abs(p.x - st.sx) > SLIDE_PX) {
+      enterCursor({ x: st.sx, y: st.sy })
+      cursorMove(p)
+      return
+    }
     const k = hitTest(p)
     if (k !== st.key) setKey(k)
   }
@@ -471,6 +566,20 @@ export function mountKeyboard(opts) {
     let k = st.key
     // (0,0) трактуємо як «координат немає» — тоді лишається натиснута клавіша.
     const valid = p && !(p.x === 0 && p.y === 0)
+    if (st.area) {
+      st.area = false
+      endPress()
+      st.key = null
+      opts.onArea('up', valid ? p : null)
+      return
+    }
+    if (st.action === 'cursor') {
+      if (valid) cursorMove(p)
+      exitCursor()
+      endPress()
+      st.key = null
+      return
+    }
     if (valid && st.action !== 'back') {
       const atUp = hitTest(p)
       if (atUp !== k) {
@@ -570,6 +679,10 @@ export function mountKeyboard(opts) {
 
   return {
     getLang: () => st.lang,
+    // Після зміни курсора ззовні (дотик до тексту): оновити велику/малу на клавішах.
+    refresh() {
+      if (editor.shift !== st.shiftState) refreshLabels()
+    },
     setDoneIcon(src) {
       st.doneIcon = src
       relayout()

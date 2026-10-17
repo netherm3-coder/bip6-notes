@@ -1,18 +1,28 @@
 // Перегляд нотатки + кнопки редагування та видалення.
+// Торкнешся абзацу (речення в довгому абзаці) — редактор відкриється з курсором на його початку.
 
 import * as hmUI from '@zos/ui'
 import { push, back } from '@zos/router'
+import { getScrollTop } from '@zos/page'
 import { getDeviceInfo } from '@zos/device'
 import { createModal, MODAL_CONFIRM } from '@zos/interaction'
 import { createStore } from '../utils/store'
 import { formatStamp } from '../utils/time'
 import { COLOR, STATUS_BAR_H } from '../utils/constants'
-import { statusBar, toast, parseParams, textHeight, splitChunks } from '../utils/ui'
+import { statusBar, toast, parseParams, textHeight, textChunks } from '../utils/ui'
 
 const PAD_X = 22
 const TITLE_SIZE = 32
 const BODY_SIZE = 26
-const CHUNK = 500
+const CHUNK = 240
+
+function scrollTop() {
+  try {
+    return getScrollTop() || 0
+  } catch (e) {
+    return 0
+  }
+}
 
 Page({
   onInit(params) {
@@ -79,7 +89,7 @@ Page({
     hmUI.createWidget(hmUI.widget.FILL_RECT, { x: PAD_X, y, w: textW, h: 2, radius: 1, color: COLOR.LINE })
     y += 2 + 12
 
-    const chunks = note.body ? splitChunks(note.body, CHUNK) : []
+    const chunks = note.body ? textChunks(note.body, CHUNK) : []
     if (!chunks.length) {
       hmUI.createWidget(hmUI.widget.TEXT, {
         x: PAD_X,
@@ -96,9 +106,9 @@ Page({
       y += 70
     } else {
       chunks.forEach((chunk) => {
-        const text = chunk === '' ? ' ' : chunk
+        const text = chunk.text === '' ? ' ' : chunk.text
         const h = textHeight(text, BODY_SIZE, textW) + 4
-        hmUI.createWidget(hmUI.widget.TEXT, {
+        const wd = hmUI.createWidget(hmUI.widget.TEXT, {
           x: PAD_X,
           y,
           w: textW,
@@ -110,6 +120,7 @@ Page({
           align_v: hmUI.align.TOP,
           text_style: hmUI.text_style.WRAP
         })
+        if (chunk.text) this.tappable(wd, { x: PAD_X, y, w: textW, h }, () => this.open('page/edit', { id: note.id, field: 'body', cursor: chunk.start }))
         y += h
       })
     }
@@ -124,6 +135,29 @@ Page({
     y = this.button(y, W, 'Видалити', COLOR.DANGER, COLOR.DANGER_PRESS, () => this.askDelete())
 
     hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 0, y: y + 40, w: W, h: 2, radius: 0, color: COLOR.BG })
+  },
+
+  // Торкання тексту (не прокручування): підсвітити й відкрити.
+  tappable(wd, rect, onTap) {
+    let press = null
+    const paint = (color) => {
+      try {
+        wd.setProperty(hmUI.prop.MORE, Object.assign({}, rect, { color }))
+      } catch (e) {}
+    }
+    try {
+      wd.addEventListener(hmUI.event.CLICK_DOWN, () => {
+        press = { top: scrollTop(), t: Date.now() }
+        paint(COLOR.TEXT)
+        setTimeout(() => paint(COLOR.TEXT_SOFT), 300)
+      })
+      wd.addEventListener(hmUI.event.CLICK_UP, () => {
+        const p = press
+        press = null
+        if (!p || Math.abs(scrollTop() - p.top) > 6 || Date.now() - p.t > 1500) return
+        onTap()
+      })
+    } catch (e) {}
   },
 
   button(y, W, text, normal, pressed, onClick) {

@@ -67,53 +67,49 @@ export function lineHeight(size, width) {
   return step > 0 ? step : one.height
 }
 
-function rowsOf(text, size, width, lineH) {
-  const m = measure(text, size, width)
-  return m.rows > 0 ? m.rows : Math.round(m.height / lineH)
-}
-
-// Хвіст тексту, що вміщується в maxRows рядків (для поля введення).
-export function fitTail(text, size, width, maxRows, lineH) {
-  // Міряємо лише кінець тексту, щоб довгі нотатки не гальмували набір.
-  const windowLen = maxRows * 48
-  if (text.length <= windowLen && rowsOf(text, size, width, lineH) <= maxRows) return text
-  const windowStart = Math.max(0, text.length - windowLen)
-  let lo = windowStart + 1
-  let hi = text.length - 1
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1
-    if (rowsOf('…' + text.slice(mid), size, width, lineH) <= maxRows) hi = mid
-    else lo = mid + 1
-  }
-  // Не витрачати цілий рядок на «…», якщо хвіст починається з нового рядка.
-  return '…' + text.slice(lo).replace(/^\n+/, '')
-}
-
-// Довгий текст ділиться на шматки, щоб жоден віджет TEXT не був надто високим.
-export function splitChunks(text, maxLen) {
+// Текст для перегляду — шматками з позицією початку в тексті нотатки:
+// абзац, а довгий абзац — по реченнях (до maxLen символів). Торкнешся шматка —
+// редактор відкриється з курсором на його початку.
+// Порожні рядки лишаються відступом (не більше одного поспіль).
+export function textChunks(text, maxLen) {
   const out = []
-  String(text).split('\n').forEach((para) => {
-    let rest = para
-    while (rest.length > maxLen) {
-      let cut = rest.lastIndexOf(' ', maxLen)
-      if (cut < maxLen * 0.6) cut = maxLen
-      out.push(rest.slice(0, cut))
-      rest = rest.slice(cut).replace(/^ /, '')
-    }
-    out.push(rest)
-  })
-  // Порожні абзаци лишаються як відступи, але не більше двох поспіль.
-  const merged = []
+  const t = String(text)
+  let offset = 0
   let blank = 0
-  out.forEach((p) => {
-    if (p.trim() === '') {
+  t.split('\n').forEach((para) => {
+    const paraStart = offset
+    offset += para.length + 1
+    if (!para.trim()) {
       blank += 1
-      if (blank <= 1) merged.push('')
-    } else {
-      blank = 0
-      merged.push(p)
+      if (blank === 1 && out.length) out.push({ text: '', start: paraStart })
+      return
+    }
+    blank = 0
+    let pos = 0
+    while (pos < para.length) {
+      while (pos < para.length && para[pos] === ' ') pos++
+      if (pos >= para.length) break
+      let end = para.length
+      if (end - pos > maxLen) {
+        const piece = para.slice(pos, pos + maxLen)
+        let cut = -1
+        // кінець речення в другій половині шматка, інакше — останній пробіл
+        for (let i = piece.length - 1; i >= Math.floor(maxLen * 0.35); i--) {
+          if (piece[i] === ' ' && /[.!?…]/.test(piece[i - 1])) {
+            cut = i
+            break
+          }
+        }
+        if (cut < 0) {
+          const sp = piece.lastIndexOf(' ')
+          cut = sp >= Math.floor(maxLen * 0.5) ? sp : maxLen
+        }
+        end = pos + cut
+      }
+      out.push({ text: para.slice(pos, end).replace(/\s+$/, ''), start: paraStart + pos })
+      pos = end
     }
   })
-  while (merged.length && merged[merged.length - 1] === '') merged.pop()
-  return merged
+  while (out.length && out[out.length - 1].text === '') out.pop()
+  return out
 }
