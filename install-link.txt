@@ -1,0 +1,1 @@
+zpkd1://raw.githubusercontent.com/netherm3-coder/bip6-notes/build/bip6-notes.zpk
